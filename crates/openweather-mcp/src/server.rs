@@ -1,4 +1,4 @@
-use openweather_sdk::{ClientV4, Error, TimelineQuery, Units, WeatherQuery};
+use openweather_onecall_sdk::{ClientV4, Error, TimelineQuery, Units, WeatherQuery};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},

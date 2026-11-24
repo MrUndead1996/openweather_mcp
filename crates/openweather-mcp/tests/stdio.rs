@@ -3,7 +3,7 @@ mod server;
 
 use std::{process::Stdio, time::Duration};
 
-use openweather_sdk::{ClientV4, ClientV4Config};
+use openweather_onecall_sdk::{ClientV4, ClientV4Config};
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
 use tokio::{

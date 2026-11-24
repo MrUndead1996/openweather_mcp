@@ -3,7 +3,7 @@ mod server;
 
 use std::{env, error::Error, ffi::OsStr, process::ExitCode};
 
-use openweather_sdk::ClientV4;
+use openweather_onecall_sdk::ClientV4;
 use rmcp::{ServiceExt, transport::stdio};
 
 use crate::server::WeatherServer;
