@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/openweather-sdk"]
+members = ["crates/openweather-sdk", "crates/openweather-mcp"]
 resolver = "3"
 
 [workspace.package]
