@@ -86,6 +86,7 @@ fn binary() -> Command {
     cmd.env_remove("OPENWEATHER_API_KEY")
         .env_remove("OPENWEATHER_API_KEY_FILE")
         .env_remove("OPENWEATHER_API_VERSION")
+        .env_remove("OPENWEATHER_LOG")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -161,6 +162,7 @@ async fn binary_rejects_conflicting_sources_without_printing_secret_values() {
 async fn binary_accepts_explicit_v4() {
     let mut child = binary()
         .env("OPENWEATHER_API_VERSION", "v4")
+        .env("OPENWEATHER_LOG", "debug")
         .env("OPENWEATHER_API_KEY", KEY)
         .stdin(Stdio::piped())
         .spawn()
@@ -168,13 +170,15 @@ async fn binary_accepts_explicit_v4() {
     let mut peer = Peer::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
     peer.initialize().await;
     drop(peer);
-    assert!(
-        timeout(DEADLINE, child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
-    );
+    let output = timeout(DEADLINE, child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Starting OpenWeather MCP stdio server"));
+    assert!(!stderr.contains(KEY));
 }
 
 #[tokio::test]
@@ -197,6 +201,15 @@ async fn binary_rejects_unsupported_api_version_before_loading_credentials() {
 
 #[tokio::test]
 async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
+    let logs = tempfile::NamedTempFile::new().unwrap();
+    let log_writer = logs.reopen().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || log_writer.try_clone().unwrap())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     let mock = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = mock.local_addr().unwrap();
     let client = ClientV4::with_config(
@@ -218,6 +231,15 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
             "lat": 51.5, "lon": -0.1, "timezone": "Europe/London", "timezone_offset": 3600,
             "data": [{"dt": 1777455900, "temp": 13.1}],
         });
+        let invalid = json!({
+            "lat": 51.5, "lon": -0.1, "timezone": "Europe/London", "timezone_offset": 3600,
+            "data": [{"dt": 1777455900, "pressure": KEY}],
+        });
+        let invalid_cursor = json!({
+            "lat": 51.5, "lon": -0.1, "timezone": "Europe/London", "timezone_offset": 3600,
+            "data": [],
+            "next": format!("http://{addr}/data/4.0/onecall/timeline/1day?start={KEY}&appid={KEY}"),
+        });
         let response_cases = [
             ("200 OK", first.to_string()),
             ("200 OK", second.to_string()),
@@ -225,6 +247,8 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
                 "429 Too Many Requests",
                 format!("untrusted body containing {KEY}"),
             ),
+            ("200 OK", invalid.to_string()),
+            ("200 OK", invalid_cursor.to_string()),
         ];
         let mut requests = Vec::new();
         for (status, body) in response_cases {
@@ -283,10 +307,21 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
     assert_eq!(second["structuredContent"]["data"][0]["dt"], 1777455900);
     assert!(second["structuredContent"].get("next").is_none());
 
-    let failed = peer.call("get_current_weather", args).await;
+    let failed = peer.call("get_current_weather", args.clone()).await;
     assert_eq!(failed["isError"], true);
     assert_eq!(failed["structuredContent"]["code"], "rate_limited");
     assert!(!failed.to_string().contains(KEY));
+
+    for message in [
+        "OpenWeather returned an invalid response",
+        "OpenWeather returned invalid pagination data",
+    ] {
+        let failed = peer.call("get_daily_timeline", args.clone()).await;
+        assert_eq!(failed["isError"], true);
+        assert_eq!(failed["structuredContent"]["code"], "invalid_response");
+        assert_eq!(failed["structuredContent"]["message"], message);
+        assert!(!failed.to_string().contains(KEY));
+    }
 
     let requests = timeout(DEADLINE, mock_task).await.unwrap().unwrap();
     assert!(requests[0].starts_with("GET /data/4.0/onecall/timeline/1h?"));
@@ -300,4 +335,21 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
 
     drop(peer);
     timeout(DEADLINE, service).await.unwrap().unwrap().unwrap();
+    let logs = std::fs::read_to_string(logs.path()).unwrap();
+    for detail in [
+        "status=429",
+        "Could not decode OpenWeather response",
+        "status=200",
+        "timeline/1day",
+        "$.data[0]",
+        "category=Data",
+        "Invalid OpenWeather pagination",
+        "invalid start",
+    ] {
+        assert!(logs.contains(detail), "missing {detail}: {logs}");
+    }
+    assert!(!logs.contains(KEY));
+    assert!(!logs.contains("appid"));
+    assert!(!logs.contains("untrusted body"));
+    assert!(!logs.contains("http://"));
 }

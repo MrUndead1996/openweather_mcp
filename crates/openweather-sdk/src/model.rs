@@ -156,7 +156,7 @@ pub struct DayParts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Conditions {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pressure: Option<u32>,
+    pub pressure: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub humidity: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

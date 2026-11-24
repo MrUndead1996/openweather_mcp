@@ -192,6 +192,7 @@ fn result<T: Serialize>(outcome: Result<T, Error>) -> CallToolResult {
                 Error::InvalidResponse | Error::InvalidPagination => "invalid_response",
                 _ => "internal_error",
             };
+            tracing::debug!(code, "OpenWeather MCP tool returned an error");
             CallToolResult::structured_error(json!({"code": code, "message": error.to_string()}))
         }
     }

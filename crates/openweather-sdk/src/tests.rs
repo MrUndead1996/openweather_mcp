@@ -219,12 +219,14 @@ async fn hourly_timeline_accepts_historical_start() {
 async fn daily_timeline_decodes_grouped_temperatures() {
     let body = weather(json!({
         "dt": 1777460400,
+        "pressure": 1018.37,
         "temp": {"min": 280.7, "max": 290.05, "day": 288.16, "night": 285.7, "eve": 289.38, "morn": 282.78},
         "feels_like": {"day": 286.89, "night": 284.58, "eve": 288.31, "morn": 279.89}
     }));
     let mock = Mock::ok(body.clone()).await;
     let page = mock.client().daily_timeline(&query().into()).await.unwrap();
     assert_eq!(page.weather.data[0].temp.as_ref().unwrap().min, 280.7);
+    assert_eq!(page.weather.data[0].conditions.pressure, Some(1018.37));
     assert_eq!(serde_json::to_value(page).unwrap(), body);
     mock.assert_request("timeline/1day", LOCATION).await;
 }
@@ -301,6 +303,24 @@ async fn classifies_timeout() {
 }
 
 #[test]
+fn extracts_cursor_from_production_http_link_without_using_it_as_a_request_url() {
+    let endpoint = parse_base_url(&ClientV4Config::default().base_url)
+        .unwrap()
+        .join("timeline/1day")
+        .unwrap();
+    assert_eq!(
+        parse_cursor(
+            "http://api.openweathermap.org/data/4.0/onecall/timeline/1day?start=42&cnt=4&appid=secret",
+            &endpoint
+        ),
+        Ok(PageCursor {
+            start: 42,
+            cnt: Some(4)
+        })
+    );
+}
+
+#[test]
 fn rejects_wrong_origin_wrong_path_and_invalid_cursor_values() {
     let endpoint = parse_base_url(&ClientV4Config::default().base_url)
         .unwrap()
@@ -308,12 +328,15 @@ fn rejects_wrong_origin_wrong_path_and_invalid_cursor_values() {
         .unwrap();
     for link in [
         "https://weather.example/data/4.0/onecall/timeline/1h?start=1",
+        "http://weather.example/data/4.0/onecall/timeline/1h?start=1",
+        "http://api.openweathermap.org:8080/data/4.0/onecall/timeline/1h?start=1",
+        "http://user:secret@api.openweathermap.org/data/4.0/onecall/timeline/1h?start=1",
         "https://api.openweathermap.org/data/4.0/onecall/timeline/1day?start=1",
         "https://api.openweathermap.org/data/4.0/onecall/timeline/1h?appid=secret",
         "https://api.openweathermap.org/data/4.0/onecall/timeline/1h?start=1&start=2",
         "https://api.openweathermap.org/data/4.0/onecall/timeline/1h?start=1&cnt=0",
     ] {
-        assert_eq!(cursor(link, &endpoint), Err(Error::InvalidPagination));
+        assert!(parse_cursor(link, &endpoint).is_err());
     }
 }
 
