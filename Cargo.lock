@@ -737,7 +737,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "openweather-mcp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "openweather-onecall-sdk",
  "rmcp",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "openweather-onecall-sdk"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "reqwest",
  "rustls",
