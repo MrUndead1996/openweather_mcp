@@ -19,6 +19,15 @@ Extract the archive and keep the absolute path to `openweather-mcp` for your cli
 tar -xzf openweather-mcp-linux-x86_64.tar.gz
 ```
 
+Check the installed version or update the binary in place:
+
+```sh
+/absolute/path/to/openweather-mcp --version
+/absolute/path/to/openweather-mcp update
+```
+
+`update` checks the latest stable GitHub release for Linux x86_64 or aarch64, verifies the archive's SHA-256, and replaces the executable only if a newer version is available. It needs write access to the executable's directory but no OpenWeather API key. Restart your MCP client after updating.
+
 ## Setup
 
 1. Activate a separate [One Call by Call](https://home.openweathermap.org/subscriptions) subscription and use an API key from the same account. The standard **Free** plan does not include One Call 4.0. The first 1,000 calls per day are free; to avoid charges, set your daily limit to 1,000 in your OpenWeather account.

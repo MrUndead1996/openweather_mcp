@@ -98,6 +98,32 @@ fn binary() -> Command {
 }
 
 #[tokio::test]
+async fn version_and_argument_errors_do_not_start_the_server_or_require_a_key() {
+    let version = timeout(DEADLINE, binary().arg("--version").output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap(),
+        concat!("openweather-mcp ", env!("CARGO_PKG_VERSION"), "\n")
+    );
+    assert!(version.stderr.is_empty());
+
+    let unexpected = timeout(DEADLINE, binary().args(["update", "extra"]).output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!unexpected.status.success());
+    assert!(unexpected.stdout.is_empty());
+    assert!(
+        String::from_utf8(unexpected.stderr)
+            .unwrap()
+            .contains("usage:")
+    );
+}
+
+#[tokio::test]
 async fn binary_initializes_from_secret_file_and_lists_all_six_tools() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), format!("{KEY}\n")).unwrap();

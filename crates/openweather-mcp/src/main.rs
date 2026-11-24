@@ -3,6 +3,8 @@ mod cache;
 mod cache_tests;
 mod secret;
 mod server;
+#[cfg(target_os = "linux")]
+mod update;
 
 use std::{env, error::Error, ffi::OsStr, process::ExitCode};
 
@@ -39,6 +41,26 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
+    let mut args = env::args_os().skip(1);
+    if let Some(arg) = args.next() {
+        if args.next().is_some() {
+            return Err("usage: openweather-mcp [--version|update]".into());
+        }
+        match arg.to_str() {
+            Some("--version") => println!("openweather-mcp {}", env!("CARGO_PKG_VERSION")),
+            Some("-h" | "--help") => {
+                println!(
+                    "Usage: openweather-mcp [--version|update]\nWithout arguments, start the MCP server over stdio."
+                );
+            }
+            #[cfg(target_os = "linux")]
+            Some("update") => update::run().await?,
+            #[cfg(not(target_os = "linux"))]
+            Some("update") => return Err("self-update is supported only on Linux".into()),
+            _ => return Err("usage: openweather-mcp [--version|update]".into()),
+        }
+        return Ok(());
+    }
     init_logging()?;
     match ApiVersion::load()? {
         ApiVersion::V4 => serve_v4().await,
