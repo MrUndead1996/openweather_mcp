@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+moka = { version = "0.12", default-features = false, features = ["future"] }
 openweather-onecall-sdk = { path = "../openweather-sdk" }
 rmcp = { version = "3.11", default-features = false, features = ["macros", "server", "transport-io"] }
 schemars = "1"

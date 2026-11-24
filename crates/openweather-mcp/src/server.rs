@@ -9,8 +9,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::cache::{Tool, WeatherCache};
+
 pub struct WeatherServer {
     client: ClientV4,
+    cache: Option<WeatherCache>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -32,21 +35,42 @@ impl ServerHandler for WeatherServer {
 
 #[tool_router]
 impl WeatherServer {
-    pub fn new(client: ClientV4) -> Self {
+    pub fn new(client: ClientV4, cache_enabled: bool) -> Self {
         Self {
             client,
+            cache: cache_enabled.then(WeatherCache::new),
             tool_router: Self::tool_router(),
+        }
+    }
+
+    async fn cached<T: Serialize>(
+        &self,
+        tool: Tool,
+        args: &impl Serialize,
+        fetch: impl Future<Output = Result<T, Error>>,
+    ) -> CallToolResult {
+        match &self.cache {
+            Some(cache) => {
+                cache
+                    .get_or_fetch(tool, args, async { result(fetch.await) })
+                    .await
+            }
+            None => result(fetch.await),
         }
     }
 
     #[tool(description = "Get the current weather and active alert IDs for a location.")]
     async fn get_current_weather(&self, Parameters(args): Parameters<Location>) -> CallToolResult {
-        result(self.client.current_weather(&args.into()).await)
+        let query = args.into();
+        self.cached(Tool::Current, &query, self.client.current_weather(&query))
+            .await
     }
 
     #[tool(description = "Get the minute-by-minute precipitation forecast for the next hour.")]
     async fn get_minute_forecast(&self, Parameters(args): Parameters<Location>) -> CallToolResult {
-        result(self.client.minute_forecast(&args.into()).await)
+        let query = args.into();
+        self.cached(Tool::Minute, &query, self.client.minute_forecast(&query))
+            .await
     }
 
     #[tool(description = "Get one page of the 15-minute forecast for the next 48 hours.")]
@@ -54,26 +78,41 @@ impl WeatherServer {
         &self,
         Parameters(args): Parameters<Timeline>,
     ) -> CallToolResult {
-        result(self.client.fifteen_minute_forecast(&args.into()).await)
+        let query = args.into();
+        self.cached(
+            Tool::FifteenMinute,
+            &query,
+            self.client.fifteen_minute_forecast(&query),
+        )
+        .await
     }
 
     #[tool(
         description = "Get one page of hourly historical weather or the next 48 hours of forecasts."
     )]
     async fn get_hourly_timeline(&self, Parameters(args): Parameters<Timeline>) -> CallToolResult {
-        result(self.client.hourly_timeline(&args.into()).await)
+        let query = args.into();
+        self.cached(Tool::Hourly, &query, self.client.hourly_timeline(&query))
+            .await
     }
 
     #[tool(
         description = "Get one page of daily historical weather or forecasts up to 1.5 years ahead."
     )]
     async fn get_daily_timeline(&self, Parameters(args): Parameters<Timeline>) -> CallToolResult {
-        result(self.client.daily_timeline(&args.into()).await)
+        let query = args.into();
+        self.cached(Tool::Daily, &query, self.client.daily_timeline(&query))
+            .await
     }
 
     #[tool(description = "Get detailed information for an alert ID returned by a weather tool.")]
     async fn get_weather_alert(&self, Parameters(args): Parameters<Alert>) -> CallToolResult {
-        result(self.client.weather_alert(&args.alert_id).await)
+        self.cached(
+            Tool::Alert,
+            &args.alert_id,
+            self.client.weather_alert(&args.alert_id),
+        )
+        .await
     }
 }
 
@@ -197,3 +236,4 @@ fn result<T: Serialize>(outcome: Result<T, Error>) -> CallToolResult {
         }
     }
 }
+use std::future::Future;

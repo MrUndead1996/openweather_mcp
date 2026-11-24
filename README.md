@@ -45,6 +45,7 @@ tar -xzf openweather-mcp-linux-x86_64.tar.gz
 | `OPENWEATHER_API_KEY_FILE` | Path to a UTF-8 file containing the API key. The server reads it once at startup and trims leading and trailing whitespace, including newlines. Leave unset if you use `OPENWEATHER_API_KEY`. |
 | `OPENWEATHER_API_VERSION` | Optional. Defaults to `v4`, the only supported value. |
 | `OPENWEATHER_LOG` | Optional. `warn` (default) logs upstream failures; `debug` also logs successful requests and timings; `off` disables these logs. |
+| `OPENWEATHER_CACHE` | Optional. `on` (default) enables the in-memory response cache; `off` sends each valid call to OpenWeather. |
 
 Set **exactly one** of the two key variables. For Docker Secrets, set `OPENWEATHER_API_KEY_FILE` to the path inside the container, such as `/run/secrets/openweather_api_key`. This project does not ship a Docker image.
 
@@ -65,11 +66,24 @@ Weather requests take `lat` and `lon` in decimal degrees. City-name lookup is no
 { "lat": 51.5, "lon": -0.1, "units": "metric", "lang": "en" }
 ```
 
-Tools return structured JSON. The 15-minute, hourly, and daily timelines return one page per call. To continue, repeat the request with the same coordinates, units, and language, using `start` (Unix timestamp in seconds, UTC) and, if present, `cnt` from `next` or `prev`. OpenWeather counts each page as a separate API call.
+Tools return structured JSON. The 15-minute, hourly, and daily timelines return one page per call. To continue, repeat the request with the same coordinates, units, and language, using `start` (Unix timestamp in seconds, UTC) and, if present, `cnt` from `next` or `prev`. A page not served from the cache requires a separate OpenWeather API call.
 
 If `get_current_weather` returns `unauthorized`, check that the API key is active and the One Call subscription is enabled on the same account.
 
 Diagnostic logs go to `stderr`, not the MCP `stdout` stream. For upstream failures they show the endpoint and failure stage, plus the HTTP status when available. JSON decode warnings include the error category, line and column, and the tracked response path (which may point to the containing object). Logs exclude API keys, full URLs, query parameters, and raw response bodies.
+
+### Response cache
+
+The MCP server keeps up to 256 successful responses in memory per process, keyed by tool and arguments (including units, language, and pagination). Concurrent identical calls share one upstream request. Errors are not cached, and restarting the server clears the cache. `OPENWEATHER_LOG=debug` shows cache hits and misses without argument values.
+
+| Response | Cached for |
+| --- | ---: |
+| Minute forecast | 30 seconds |
+| Current weather and alert details | 1 minute |
+| 15-minute and hourly timelines | 2 minutes |
+| Daily timeline | 10 minutes |
+
+These are local freshness limits, not HTTP revalidation intervals: a cache hit makes no request to OpenWeather.
 
 ## Development
 

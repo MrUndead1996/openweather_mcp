@@ -1,3 +1,5 @@
+#[path = "../src/cache.rs"]
+mod cache;
 #[path = "../src/server.rs"]
 mod server;
 
@@ -12,6 +14,7 @@ use tokio::{
     process::Command,
     time::timeout,
 };
+use tracing_subscriber::{Layer, filter::Targets, layer::SubscriberExt};
 
 const KEY: &str = "local-mock-only-key";
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -87,6 +90,7 @@ fn binary() -> Command {
         .env_remove("OPENWEATHER_API_KEY_FILE")
         .env_remove("OPENWEATHER_API_VERSION")
         .env_remove("OPENWEATHER_LOG")
+        .env_remove("OPENWEATHER_CACHE")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -163,6 +167,7 @@ async fn binary_accepts_explicit_v4() {
     let mut child = binary()
         .env("OPENWEATHER_API_VERSION", "v4")
         .env("OPENWEATHER_LOG", "debug")
+        .env("OPENWEATHER_CACHE", "off")
         .env("OPENWEATHER_API_KEY", KEY)
         .stdin(Stdio::piped())
         .spawn()
@@ -178,6 +183,7 @@ async fn binary_accepts_explicit_v4() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("Starting OpenWeather MCP stdio server"));
+    assert!(stderr.contains("cache_enabled=false"));
     assert!(!stderr.contains(KEY));
 }
 
@@ -203,11 +209,15 @@ async fn binary_rejects_unsupported_api_version_before_loading_credentials() {
 async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
     let logs = tempfile::NamedTempFile::new().unwrap();
     let log_writer = logs.reopen().unwrap();
-    let subscriber = tracing_subscriber::fmt()
+    let targets = Targets::new()
+        .with_target("stdio", tracing::Level::DEBUG)
+        .with_target("openweather_onecall_sdk", tracing::Level::DEBUG);
+    let layer = tracing_subscriber::fmt::layer()
         .without_time()
         .with_ansi(false)
         .with_writer(move || log_writer.try_clone().unwrap())
-        .finish();
+        .with_filter(targets);
+    let subscriber = tracing_subscriber::registry().with(layer);
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let mock = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -220,7 +230,7 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
         },
     )
     .unwrap();
-    let server = server::WeatherServer::new(client);
+    let server = server::WeatherServer::new(client, true);
     let mock_task = tokio::spawn(async move {
         let first = json!({
             "lat": 51.5, "lon": -0.1, "timezone": "Europe/London", "timezone_offset": 3600,
@@ -249,6 +259,7 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
             ),
             ("200 OK", invalid.to_string()),
             ("200 OK", invalid_cursor.to_string()),
+            ("429 Too Many Requests", String::new()),
         ];
         let mut requests = Vec::new();
         for (status, body) in response_cases {
@@ -298,6 +309,8 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
     assert_eq!(*cursor, json!({"start": 1777455900, "cnt": 20}));
     assert!(!first.to_string().contains(KEY));
     assert!(!first.to_string().contains("appid"));
+    let repeat = peer.call("get_hourly_timeline", args.clone()).await;
+    assert_eq!(repeat, first);
 
     let mut next_args = args.clone();
     next_args["start"] = cursor["start"].clone();
@@ -322,12 +335,15 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
         assert_eq!(failed["structuredContent"]["message"], message);
         assert!(!failed.to_string().contains(KEY));
     }
+    let retry = peer.call("get_current_weather", args).await;
+    assert_eq!(retry, failed);
 
     let requests = timeout(DEADLINE, mock_task).await.unwrap().unwrap();
     assert!(requests[0].starts_with("GET /data/4.0/onecall/timeline/1h?"));
     assert!(!requests[0].contains("start="));
     assert!(requests[1].contains("start=1777455900&cnt=20"));
     assert!(requests[2].starts_with("GET /data/4.0/onecall/current?"));
+    assert_eq!(requests[5], requests[2]);
     for request in requests {
         assert!(request.contains("units=metric") && request.contains("lang=ru"));
         assert!(request.contains(&format!("appid={KEY}")));
@@ -345,6 +361,8 @@ async fn stdio_protocol_returns_safe_timeline_pages_and_upstream_errors() {
         "category=Data",
         "Invalid OpenWeather pagination",
         "invalid start",
+        "OpenWeather cache hit",
+        "OpenWeather cache miss",
     ] {
         assert!(logs.contains(detail), "missing {detail}: {logs}");
     }

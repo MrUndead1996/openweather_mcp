@@ -1,3 +1,6 @@
+mod cache;
+#[cfg(test)]
+mod cache_tests;
 mod secret;
 mod server;
 
@@ -63,8 +66,18 @@ fn init_logging() -> Result<(), &'static str> {
 }
 
 async fn serve_v4() -> Result<(), Box<dyn Error>> {
-    let server = WeatherServer::new(ClientV4::new(secret::load()?)?);
-    tracing::debug!(api_version = "v4", "Starting OpenWeather MCP stdio server");
+    let cache_enabled = match env::var_os("OPENWEATHER_CACHE").as_deref() {
+        None => true,
+        Some(value) if value == "on" => true,
+        Some(value) if value == "off" => false,
+        Some(_) => return Err("unsupported OPENWEATHER_CACHE value; use on or off".into()),
+    };
+    let server = WeatherServer::new(ClientV4::new(secret::load()?)?, cache_enabled);
+    tracing::debug!(
+        api_version = "v4",
+        cache_enabled,
+        "Starting OpenWeather MCP stdio server"
+    );
     let service = server
         .serve(stdio())
         .await
